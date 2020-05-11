@@ -6,10 +6,21 @@ from torch.utils.data import Dataset
 from torch.utils.data.sampler import BatchSampler
 import torchvision.transforms as transforms
 
+# target_type = 'item_id'
+target_type = 'garment_categories'
+# inshop_classes = ['Denim', 'Jackets_Vests', 'Pants', 'Shirts_Polos', 'Shorts', 'Suiting', 'Sweaters',
+#                   'Sweatshirts_Hoodies', 'Tees_Tanks', 'Blouses_Shirts', 'Cardigans', 'Denim', 'Dresses',
+#                   'Graphic_Tees', 'Jackets_Coats', 'Leggings', 'Pants', 'Rompers_Jumpsuits',
+#                   'Shorts', 'Skirts', 'Sweaters', 'Sweatshirts_Hoodies', 'Tees_Tanks']
+# Men and Women have some identical catogories, delete them.
+inshop_classes = ['Denim', 'Jackets_Vests', 'Pants', 'Shirts_Polos', 'Shorts', 'Suiting', 'Sweaters',
+                  'Sweatshirts_Hoodies', 'Tees_Tanks', 'Blouses_Shirts', 'Cardigans', 'Dresses',
+                  'Graphic_Tees', 'Jackets_Coats', 'Leggings', 'Rompers_Jumpsuits',
+                  'Skirts']
+
 
 class InShopDataset(Dataset):
-    CLASSES = None
-
+    # InShopDataset
     def __init__(self,
                  img_path,
                  img_file,
@@ -39,6 +50,7 @@ class InShopDataset(Dataset):
 
         # extract categories from the img_list.
         self.categories = [x.split('/')[2] for x in self.img_list]
+        self.catogories_id = [inshop_classes.index(x) for x in self.categories]
 
         # collect id
         # id is item id, idx is the image id.
@@ -64,10 +76,13 @@ class InShopDataset(Dataset):
                 Returns:
                     tuple: (image, target) where target is index of the target class.
                 """
-        img_id = self.ids[idx]
-        target = img_id
+        if target_type == 'item_id':
+            target = self.ids[idx]
+        else:
+            target = self.catogories_id[idx]
 
-        # doing this so that it is consistent with all other datasets
+
+            # doing this so that it is consistent with all other datasets
         # to return a PIL Image
         img = Image.open(os.path.join(self.img_path, self.img_list[idx]))
         img.thumbnail(self.img_size, Image.ANTIALIAS)
@@ -97,7 +112,10 @@ class Siamese_inshop(Dataset):
 
         self.img_path = self.inshop_dataset.img_path
 
-        self.labels = self.inshop_dataset.ids
+        if target_type == 'item_id':
+            self.labels = self.inshop_dataset.ids
+        else:
+            self.labels = self.inshop_dataset.catogories_id
         self.data = self.inshop_dataset.img_list
         self.labels_set = set(np.array(self.labels))
         self.label_to_indices = {label: np.where(np.array(self.labels) == label)[0]
@@ -174,7 +192,10 @@ class Triplet_inshop(Dataset):
 
         self.img_path = self.inshop_dataset.img_path
 
-        self.labels = self.inshop_dataset.ids
+        if target_type == 'item_id':
+            self.labels = self.inshop_dataset.ids
+        else:
+            self.labels = self.inshop_dataset.catogories_id
         self.data = self.inshop_dataset.img_list
         self.labels_set = set(np.array(self.labels))
         self.label_to_indices = {label: np.where(np.array(self.labels) == label)[0]
@@ -209,10 +230,6 @@ class Triplet_inshop(Dataset):
             img1 = self.data[self.test_triplets[index][0]]
             img2 = self.data[self.test_triplets[index][1]]
             img3 = self.data[self.test_triplets[index][2]]
-
-        img1 = Image.fromarray(img1.numpy(), mode='L')
-        img2 = Image.fromarray(img2.numpy(), mode='L')
-        img3 = Image.fromarray(img3.numpy(), mode='L')
 
         img1 = Image.open(os.path.join(self.img_path, img1))
         img1.thumbnail(self.img_size, Image.ANTIALIAS)
@@ -382,8 +399,8 @@ class BalancedBatchSampler(BatchSampler):
 
     def __init__(self, labels, n_classes, n_samples):
         self.labels = labels
-        self.labels_set = list(set(self.labels.numpy()))
-        self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]
+        self.labels_set = set(np.array(self.labels))
+        self.label_to_indices = {label: np.where(np.array(self.labels) == label)[0]
                                  for label in self.labels_set}
         for l in self.labels_set:
             np.random.shuffle(self.label_to_indices[l])
@@ -397,7 +414,7 @@ class BalancedBatchSampler(BatchSampler):
     def __iter__(self):
         self.count = 0
         while self.count + self.batch_size < self.n_dataset:
-            classes = np.random.choice(self.labels_set, self.n_classes, replace=False)
+            classes = np.random.choice(list(self.labels_set), self.n_classes, replace=False)
             indices = []
             for class_ in classes:
                 indices.extend(self.label_to_indices[class_][

@@ -1,24 +1,30 @@
-from datasets import InShopDataset, Triplet_inshop
+# import GPUtil as gpu
+# gpu.assignGPU()
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = '1, 2'
+
+from datasets import InShopDataset, Triplet_inshop
+
 import pickle
 
 import torch
+import torch.nn as nn
 from torch.optim import lr_scheduler
 import torch.optim as optim
 from torch.autograd import Variable
+from sklearn.neighbors import KNeighborsClassifier
 
 from trainer import fit
 
 from plot import extract_embeddings, plot_embeddings, plot_history
 
-import GPUtil as gpu
-gpu.assignGPU()
+experiment_folder = 'result_triplet_dim2'
+batch_size = 128
+embed_dim = 2
 
 cuda = torch.cuda.is_available()
 
-# Baseline: Classification with softmax
-experiment_folder = 'result_triplet'
-resume_from_pth = False
+resume_from_pth = True
 if not os.path.isdir(experiment_folder):
     os.makedirs(experiment_folder)
 trained_weight_file = './{}/model.pth'.format(experiment_folder)
@@ -34,7 +40,7 @@ id_file = '/home/yixiong/exercise/In-shop_Clothes_Retrieval_Benchmark/Anno/query
 test_dataset = InShopDataset(img_path, img_file, id_file, train=False)
 
 # Set up data loaders
-batch_size = 64
+
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
@@ -49,11 +55,14 @@ triplet_test_loader = torch.utils.data.DataLoader(triplet_test_dataset, batch_si
 from networks import EmbeddingNet, TripletNet
 from losses import TripletLoss
 
-embed_dim = 2
 embedding_net = EmbeddingNet(embed_dim)
 margin = 1.
 model = TripletNet(embedding_net)
 if cuda:
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+        model = nn.DataParallel(model)
     model.cuda()
 loss_fn = TripletLoss(margin)
 lr = 1e-3
@@ -75,14 +84,21 @@ else:
     with open('./{}/record_history.pkl'.format(experiment_folder), 'rb') as pkl_file:
         record_history = pickle.load(pkl_file)
         pkl_file.close()
-    plot_history(experiment_folder, record_history)
 
     model.load_state_dict(torch.load(trained_weight_file))
+
+plot_history(experiment_folder, record_history)
 
 train_embeddings_baseline, train_labels_baseline = extract_embeddings(train_loader, model)
 plot_embeddings(experiment_folder, 'train', train_embeddings_baseline, train_labels_baseline)
 val_embeddings_baseline, val_labels_baseline = extract_embeddings(test_loader, model)
 plot_embeddings(experiment_folder, 'test', val_embeddings_baseline, val_labels_baseline)
+
+knn = KNeighborsClassifier(n_neighbors=15)
+knn.fit(train_embeddings_baseline, train_labels_baseline)
+
+score = knn.score(val_embeddings_baseline, val_labels_baseline)
+print(score)
 
 pass
 
